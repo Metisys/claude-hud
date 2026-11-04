@@ -21,6 +21,8 @@ export interface Paths {
   override: string;
   heartbeat: string;
   claudeJson: string;
+  /** The ecc cost-tracker ledger, ~/.claude/metrics/costs.jsonl. `hud usage` reads it. */
+  costs: string | null;
   user: { claudeMd: string; rules: string; settings: string };
   /** dotClaudeMd, rules and settings are null when the project's .claude is the user's config dir. */
   project: {
@@ -52,7 +54,8 @@ export interface Facts {
   heartbeat: { at: number; runtime: string; path: string; outcome: string; columns: number | null; stdin: StdinData | null } | null;
 }
 
-export type Probe = 'git.status' | 'git.numstat' | 'git.branch' | 'git.describe' | 'jj' | 'memory' | 'extra' | 'usage.read' | 'usage.target';
+export type Probe = 'git.status' | 'git.numstat' | 'git.branch' | 'git.describe' | 'jj' | 'memory' | 'extra' | 'usage.read' | 'usage.target'
+  | 'relay.state' | 'codex.usage' | 'codex.tokens';
 export type Answers = Partial<Record<Probe, unknown>>;
 export type Ask = (probes: Probe[]) => Promise<Answers>;
 

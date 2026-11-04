@@ -41,6 +41,10 @@ export function claudePaths(env = process.env, home = homeOf(env)) {
     overridePath: path.join(configDir, 'claude-hud.json'),
     undoPath: path.join(hudDir, 'config.undo.json'),
     heartbeat: path.join(hudDir, 'heartbeat.json'),
+    // The last answer of codex-usage, which the collector refreshes in the background.
+    codexCache: path.join(hudDir, 'codex-usage.json'),
+    // The cost ledger of the ecc cost-tracker hook, which `hud usage` reads.
+    costs: path.join(configDir, 'metrics', 'costs.jsonl'),
   };
 }
 
@@ -57,7 +61,7 @@ export const samePath = (a, b) => {
  * this same object to logic, which reads nothing else. Never .credentials.json. `input` is a stdin
  * payload: its cwd names the project, its transcript_path the session.
  */
-export function logicPaths(paths, input) {
+export function logicPaths(paths, input, { costs = false } = {}) {
   const absolute = (p) => (typeof p === 'string' && path.isAbsolute(p) ? p : null);
   const cwd = absolute(input?.cwd);
   const transcript = absolute(input?.transcript_path);
@@ -75,7 +79,8 @@ export function logicPaths(paths, input) {
   }
   return {
     data: paths.dataDir, config: paths.configPath, override: paths.overridePath, heartbeat: paths.heartbeat, claudeJson: paths.claudeJson,
-    user, project, transcript,
+    // Only `hud usage` reads the cost ledger.
+    costs: costs ? paths.costs : null, user, project, transcript,
     subagents: transcript && path.join(path.dirname(transcript), path.basename(transcript, '.jsonl'), 'subagents'),
   };
 }
@@ -197,7 +202,8 @@ export function usagePaths(paths, env = process.env, setting = userSettings(path
  * guess at what logic will want: a wrong one costs a wasted run or a missed head start, never output.
  */
 export function probesToStart(setting) {
-  return setting('gitStatus', 'enabled') === false || setting('jjStatus', 'enabled') === true ? [] : ['git.status'];
+  const git = setting('gitStatus', 'enabled') === false || setting('jjStatus', 'enabled') === true ? [] : ['git.status'];
+  return setting('display', 'showAccountUsage') === true ? [...git, 'relay.state'] : git;
 }
 
 /** Absolute paths only, with ~ and ${VAR} expanded; the write path must end in .json. Logic only ever sees the raw strings. */
@@ -563,10 +569,98 @@ function replaceFile(file, text) {
   fs.renameSync(tmp, target);
 }
 
+// ---- Account usage (fdectl#124): the token relay's window values and the Codex usage of each account.
+
+// The token relay on this host. Its GET /_relay/state shows the window values of each token.
+export const RELAY_STATE_URL = 'http://127.0.0.1:18100/_relay/state';
+export const RELAY_TIMEOUT_MS = 300;
+const MAX_RELAY_BYTES = 256 * 1024;
+
+/** The token name in `x-relay-prefer`, from the ANTHROPIC_CUSTOM_HEADERS that the launcher sets, or null. */
+export function relayPrefer(env = process.env) {
+  for (const line of String(env.ANTHROPIC_CUSTOM_HEADERS ?? '').split(/\r?\n/)) {
+    const match = /^\s*x-relay-prefer\s*:\s*([A-Za-z0-9_]+)\s*$/i.exec(line);
+    if (match) return match[1];
+  }
+  return null;
+}
+
+/** GET the relay state. Null when the relay does not answer in time, or answers with no JSON object. */
+export async function readRelayState(url = RELAY_STATE_URL, timeout = RELAY_TIMEOUT_MS) {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(timeout), redirect: 'error' });
+    if (!response.ok) return null;
+    const text = await response.text();
+    if (text.length > MAX_RELAY_BYTES) return null;
+    const value = JSON.parse(text);
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+// codex-usage reads ~/.codex on minipc only (fdectl#124, ruling 7). On another host it runs through ssh.
+export const CODEX_HOST = 'minipc';
+export const CODEX_CACHE_MS = 60_000;
+// A refresh that has not finished after this time is taken as dead, and a new one can start.
+const CODEX_REFRESH_MS = 30_000;
+const CODEX_RUN_MS = 20_000;
+
+/** The program and arguments that run codex-usage with `args`: local on minipc, else through ssh. */
+export function codexCommand(args = [], hostname = os.hostname()) {
+  if (hostname.split('.')[0] === CODEX_HOST) return ['codex-usage', args];
+  return ['ssh', ['-o', 'RemoteCommand=none', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', CODEX_HOST, 'codex-usage', ...args]];
+}
+
+/**
+ * The cached codex-usage answer, { at, text }, or null. When the cache is older than CODEX_CACHE_MS,
+ * this starts one refresh in a detached process and returns the old cache at once, so the status line
+ * never waits for ssh. A failed refresh keeps the old cache, and logic shows its age.
+ */
+export function codexUsage(cachePath, { now = Date.now(), refresh = startCodexRefresh } = {}) {
+  const cached = readJsonObject(cachePath, 512 * 1024);
+  const valid = cached && Number.isFinite(cached.at) && typeof cached.text === 'string' ? { at: cached.at, text: cached.text } : null;
+  if (!valid || now - valid.at >= CODEX_CACHE_MS) {
+    const marker = `${cachePath}.refresh`;
+    try {
+      // A marker older than CODEX_REFRESH_MS belongs to a refresh that died.
+      if (now - fs.statSync(marker).mtimeMs >= CODEX_REFRESH_MS) fs.rmSync(marker, { force: true });
+    } catch { /* no refresh runs */ }
+    try {
+      fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+      // `wx` fails when the marker exists, so of two renders at once only one starts a refresh.
+      fs.closeSync(fs.openSync(marker, 'wx', 0o600));
+      refresh(cachePath);
+    } catch { /* a refresh runs, or a read-only home has no Codex bars */ }
+  }
+  return valid;
+}
+
+function startCodexRefresh(cachePath) {
+  spawn(process.execPath, [SELF, '--codex-refresh', cachePath], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+}
+
+/** Runs codex-usage once and writes { at, text } to the cache. Keeps the old cache when the run fails. */
+export async function refreshCodexUsage(cachePath, command = codexCommand(), now = () => Date.now()) {
+  const [file, args] = command;
+  const text = await run(file, args, { timeout: CODEX_RUN_MS, maxBuffer: 256 * 1024 });
+  try {
+    if (text !== null) {
+      const tmp = `${cachePath}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify({ at: now(), text }), { mode: 0o600 });
+      fs.renameSync(tmp, cachePath);
+    }
+  } finally {
+    fs.rmSync(`${cachePath}.refresh`, { force: true });
+  }
+  return text !== null;
+}
+
 // ---- The menu logic picks from
 
 /** Every probe logic may ask for, bound to this render's inputs. Each resolves to plain JSON. */
-export function createProbes({ cwd, argv = process.argv, env = process.env, usage = { read: null, write: null }, early = [] }) {
+export function createProbes({ cwd, argv = process.argv, env = process.env, usage = { read: null, write: null }, early = [],
+  codexCache = null, relayUrl = RELAY_STATE_URL, codexTokens = false }) {
   const extraCmd = parseExtraCmdArg(argv, env);
   const extra = extraCmd ? runExtraCmd(extraCmd) : Promise.resolve(null);
   let overrides;
@@ -609,7 +703,16 @@ export function createProbes({ cwd, argv = process.argv, env = process.env, usag
       }
       return readText(usage.write) ?? { text: null, mtimeMs: null };
     },
+    'relay.state': async () => ({ state: await readRelayState(relayUrl), prefer: relayPrefer(env) }),
+    'codex.usage': () => (codexCache ? codexUsage(codexCache) : null),
   };
+  // For `hud usage` only, which Claude Code asks about first. It may wait, since it is not the status line.
+  if (codexTokens) {
+    probes['codex.tokens'] = () => {
+      const [file, args] = codexCommand(['--tokens']);
+      return run(file, args, { timeout: CODEX_RUN_MS, maxBuffer: 8 * 1024 * 1024 });
+    };
+  }
   // Each probe runs at most once per render, whether started early or asked for.
   const started = new Map();
   const once = (name) => {
@@ -630,6 +733,12 @@ export function createProbes({ cwd, argv = process.argv, env = process.env, usag
 
 // ---- Windows git worker: node collector.mjs --git-worker <absolute git path> <cwd> <git args...>
 // Git writes straight to the stdout pipe this worker inherited from its parent.
+
+// ---- Codex refresh: node collector.mjs --codex-refresh <cache path>, started detached by codexUsage.
+
+if (process.argv[1] && path.resolve(process.argv[1]) === SELF && process.argv[2] === '--codex-refresh' && process.argv[3]) {
+  await refreshCodexUsage(path.resolve(process.argv[3]));
+}
 
 if (process.argv[1] && path.resolve(process.argv[1]) === SELF && process.argv[2] === '--git-worker') {
   const [gitExecutable, cwd, ...args] = process.argv.slice(3);

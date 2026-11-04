@@ -2,6 +2,7 @@ import type { HudConfig } from './config.ts';
 import type { GitRepoIdentity, GitStatus } from './git.ts';
 import type { AuthInfo } from './auth.ts';
 import type { CostTotals } from './daily-cost.ts';
+import type { AccountsView } from './accounts.ts';
 
 // The statusline payload Claude Code writes to stdin (code.claude.com/docs/en/statusline).
 export interface StdinData {
@@ -201,4 +202,6 @@ export interface RenderContext {
   config: HudConfig;
   extraLabel: string | null;
   authInfo?: AuthInfo | null;
+  /** Usage per account from the token relay and codex-usage, when display.showAccountUsage or showCodexUsage is on. */
+  accounts?: AccountsView | null;
 }

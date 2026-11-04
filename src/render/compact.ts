@@ -1,6 +1,7 @@
 import { DEFAULT_PROJECT_LINE_ORDER } from '../config.ts';
 import { t } from '../i18n/index.ts';
 import type { Frame } from './frame.ts';
+import { accountLines } from './accounts.ts';
 import { activityLine, type ActivityElement } from './activity.ts';
 import { separatorLine, visibleWidth } from './ansi.ts';
 import { contextBarAndValue, tokenBreakdown } from './context.ts';
@@ -53,7 +54,7 @@ function sessionLine(f: Frame): string {
 export function compactLines(f: Frame): string[] {
   const header = sessionLine(f);
   const activity = ACTIVITY.map((element) => activityLine(f, element)).filter((line): line is string => !!line);
-  const lines = [header];
+  const lines = [header, ...accountLines(f)];
   if (f.config?.showSeparators && activity.length > 0) {
     const widest = Math.max(visibleWidth(header), 20);
     lines.push(separatorLine(f.width ? Math.min(widest, f.width) : widest));
