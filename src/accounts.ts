@@ -18,7 +18,7 @@ export interface AccountWindow {
 export interface AccountUsage {
   /** Short name: the relay token name without CLAUDE_CODE_OAUTH_TOKEN_, or the Codex email. */
   name: string;
-  /** Data time in ms: the relay's unified_at, or the Codex record time. Null when unknown. */
+  /** Data time in ms: the relay's unified_at_epoch (else unified_at), or the Codex record time. Null when unknown. */
   at: number | null;
   fiveHour: AccountWindow;
   sevenDay: AccountWindow;
@@ -51,6 +51,19 @@ function timeOf(value: unknown): number | null {
   if (typeof value !== 'string') return null;
   const ms = Date.parse(value);
   return Number.isFinite(ms) ? ms : null;
+}
+
+const FUTURE_SLACK_MS = 60_000;
+
+/**
+ * The relay's data time in ms. `unified_at_epoch` (Unix seconds) has a time zone. `unified_at` is the
+ * relay host's local time with no zone, so it is correct only when the HUD runs in the same zone.
+ * Relays from before fdectl 2026-11-04 send only `unified_at`.
+ */
+function relayTimeOf(token: Record<string, unknown>, now: number): number | null {
+  const epoch = finite(token.unified_at_epoch);
+  // A time after now (e.g. milliseconds sent as seconds) would stop the forecast taking new samples.
+  return epoch !== null && epoch > 0 && epoch * 1000 <= now + FUTURE_SLACK_MS ? epoch * 1000 : timeOf(token.unified_at);
 }
 
 /**
@@ -91,7 +104,7 @@ export function parseRelayAccounts(answer: unknown, sessionId: string | null, no
     if (!name) return null;
     return {
       name,
-      at: timeOf(token.unified_at),
+      at: relayTimeOf(token, now),
       fiveHour: window('5h'),
       sevenDay: window('7d'),
       served: index === served,

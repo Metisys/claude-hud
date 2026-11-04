@@ -43,6 +43,16 @@ test('Codex rows: tokens per cwd and day, input without the cached part, cost "s
   assert.deepEqual(rows, [{ source: 'codex', project: 'src/x', day: '2026-11-02', input: 200, output: 30, cache: 800, cost: null }]);
 });
 
+test('Codex rows: the codex-usage --tokens line shape, two accounts in one cwd and day are added', () => {
+  // The line shape of fdectl codex-usage --tokens (fdectl#138), as measured on minipc.
+  const line = (account, input, cached, output) => JSON.stringify({ account, cwd: '/home/u/w/a', day: '2026-11-03',
+    input_tokens: input, cached_input_tokens: cached, output_tokens: output, total_tokens: input + output });
+  const rows = codexRows([line('a@x', 300, 120, 40), line('b@x', 100, 100, 5)].join('\n'), HOME);
+  const text = usageTables(rows, '2026-11-01').join('\n');
+  assert.match(text, /codex {3}w\/a +180 +45 +220 +subscription/);
+  assert.match(text, /codex {3}2026-11-03 +180 +45 +220 +subscription/);
+});
+
 test('usageTables groups by project and by day, from the first day on', () => {
   const rows = [
     ...claudeRows([line('s1', '2026-10-01T10:00:00', '-home-u-old', 999, 9), line('s2', '2026-11-01T10:00:00', '-home-u-a', 100, 1),
