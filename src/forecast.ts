@@ -12,8 +12,9 @@ import { parseCodexUsage, parseRelayAccounts, type AccountUsage, type AccountWin
 // rate = (newest percent - oldest percent in the lookback) / (time between them)
 // full = newest time + (100 - newest percent) / rate
 //
-// No forecast when the rate is not positive, when the samples span less than MIN_SPAN_MS, or when
-// the window resets before it is full.
+// No forecast when the rate is not positive, when the samples span less than MIN_SPAN_MS, when the
+// window resets before it is full, or when the newest sample is older than the lookback or the
+// forecast time is already past (the account stopped).
 
 export const STATE_FILE = 'usage-rate.json';
 const MIN_SPAN_MS = 10 * 60 * 1000;
@@ -89,6 +90,8 @@ export function forecastFull(dataDir: string, observations: Observation[], now: 
     const rate = (newest[1] - first[1]) / span;
     if (!(rate > 0)) return null;
     const full = newest[0] + (100 - newest[1]) / rate;
+    // An account that stopped has an old newest sample, and its forecast is in the past: no forecast.
+    if (full <= now || now - newest[0] > o.lookbackMs) return null;
     return reset !== null && full >= reset ? null : new Date(full);
   });
   for (const [key, entry] of Object.entries(state)) if (now - entry.seen > FORGET_MS) delete state[key];

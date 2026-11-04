@@ -69,3 +69,17 @@ test('the data time, not the render time, places a sample', () => withDir(async 
   const [full] = forecastFull(dir, [obs(T0 + 20 * MIN, 60)], T0 + 30 * MIN);
   assert.equal(full.toISOString(), new Date(T0 + 60 * MIN).toISOString());
 }));
+
+test('an account that stopped has no forecast', () => withDir(async (dir) => {
+  forecastFull(dir, [obs(T0, 40)], T0);
+  // Rising 1 %/min until T0+20m, then no new value: full would be T0+60m.
+  assert.ok(forecastFull(dir, [obs(T0 + 20 * MIN, 60)], T0 + 20 * MIN)[0]);
+  assert.deepEqual(forecastFull(dir, [obs(T0 + 20 * MIN, 60)], T0 + 61 * MIN), [null], 'the forecast time is past');
+}));
+
+test('a newest sample older than the lookback gives no forecast', () => withDir(async (dir) => {
+  const late = new Date(T0 + 20 * 60 * MIN);
+  forecastFull(dir, [obs(T0, 10, late)], T0);
+  forecastFull(dir, [obs(T0 + 20 * MIN, 12, late)], T0 + 20 * MIN);
+  assert.deepEqual(forecastFull(dir, [obs(T0 + 20 * MIN, 12, late)], T0 + 90 * MIN), [null]);
+}));

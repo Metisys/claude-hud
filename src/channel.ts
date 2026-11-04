@@ -22,7 +22,7 @@ export interface Paths {
   heartbeat: string;
   claudeJson: string;
   /** The ecc cost-tracker ledger, ~/.claude/metrics/costs.jsonl. `hud usage` reads it. */
-  costs: string;
+  costs: string | null;
   user: { claudeMd: string; rules: string; settings: string };
   /** dotClaudeMd, rules and settings are null when the project's .claude is the user's config dir. */
   project: {

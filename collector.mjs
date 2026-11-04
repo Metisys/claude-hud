@@ -61,7 +61,7 @@ export const samePath = (a, b) => {
  * this same object to logic, which reads nothing else. Never .credentials.json. `input` is a stdin
  * payload: its cwd names the project, its transcript_path the session.
  */
-export function logicPaths(paths, input) {
+export function logicPaths(paths, input, { costs = false } = {}) {
   const absolute = (p) => (typeof p === 'string' && path.isAbsolute(p) ? p : null);
   const cwd = absolute(input?.cwd);
   const transcript = absolute(input?.transcript_path);
@@ -79,7 +79,8 @@ export function logicPaths(paths, input) {
   }
   return {
     data: paths.dataDir, config: paths.configPath, override: paths.overridePath, heartbeat: paths.heartbeat, claudeJson: paths.claudeJson,
-    costs: paths.costs, user, project, transcript,
+    // Only `hud usage` reads the cost ledger.
+    costs: costs ? paths.costs : null, user, project, transcript,
     subagents: transcript && path.join(path.dirname(transcript), path.basename(transcript, '.jsonl'), 'subagents'),
   };
 }
@@ -201,7 +202,8 @@ export function usagePaths(paths, env = process.env, setting = userSettings(path
  * guess at what logic will want: a wrong one costs a wasted run or a missed head start, never output.
  */
 export function probesToStart(setting) {
-  return setting('gitStatus', 'enabled') === false || setting('jjStatus', 'enabled') === true ? [] : ['git.status'];
+  const git = setting('gitStatus', 'enabled') === false || setting('jjStatus', 'enabled') === true ? [] : ['git.status'];
+  return setting('display', 'showAccountUsage') === true ? [...git, 'relay.state'] : git;
 }
 
 /** Absolute paths only, with ~ and ${VAR} expanded; the write path must end in .json. Logic only ever sees the raw strings. */
@@ -620,17 +622,16 @@ export function codexUsage(cachePath, { now = Date.now(), refresh = startCodexRe
   const valid = cached && Number.isFinite(cached.at) && typeof cached.text === 'string' ? { at: cached.at, text: cached.text } : null;
   if (!valid || now - valid.at >= CODEX_CACHE_MS) {
     const marker = `${cachePath}.refresh`;
-    let busy = false;
     try {
-      busy = now - fs.statSync(marker).mtimeMs < CODEX_REFRESH_MS;
+      // A marker older than CODEX_REFRESH_MS belongs to a refresh that died.
+      if (now - fs.statSync(marker).mtimeMs >= CODEX_REFRESH_MS) fs.rmSync(marker, { force: true });
     } catch { /* no refresh runs */ }
-    if (!busy) {
-      try {
-        fs.mkdirSync(path.dirname(cachePath), { recursive: true });
-        fs.writeFileSync(marker, String(now), { mode: 0o600 });
-        refresh(cachePath);
-      } catch { /* a read-only home has no Codex bars */ }
-    }
+    try {
+      fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+      // `wx` fails when the marker exists, so of two renders at once only one starts a refresh.
+      fs.closeSync(fs.openSync(marker, 'wx', 0o600));
+      refresh(cachePath);
+    } catch { /* a refresh runs, or a read-only home has no Codex bars */ }
   }
   return valid;
 }
@@ -659,7 +660,7 @@ export async function refreshCodexUsage(cachePath, command = codexCommand(), now
 
 /** Every probe logic may ask for, bound to this render's inputs. Each resolves to plain JSON. */
 export function createProbes({ cwd, argv = process.argv, env = process.env, usage = { read: null, write: null }, early = [],
-  codexCache = null, relayUrl = RELAY_STATE_URL }) {
+  codexCache = null, relayUrl = RELAY_STATE_URL, codexTokens = false }) {
   const extraCmd = parseExtraCmdArg(argv, env);
   const extra = extraCmd ? runExtraCmd(extraCmd) : Promise.resolve(null);
   let overrides;
@@ -704,12 +705,14 @@ export function createProbes({ cwd, argv = process.argv, env = process.env, usag
     },
     'relay.state': async () => ({ state: await readRelayState(relayUrl), prefer: relayPrefer(env) }),
     'codex.usage': () => (codexCache ? codexUsage(codexCache) : null),
-    // For `hud usage` only: it may wait, since it is not the status line.
-    'codex.tokens': () => {
+  };
+  // For `hud usage` only, which Claude Code asks about first. It may wait, since it is not the status line.
+  if (codexTokens) {
+    probes['codex.tokens'] = () => {
       const [file, args] = codexCommand(['--tokens']);
       return run(file, args, { timeout: CODEX_RUN_MS, maxBuffer: 8 * 1024 * 1024 });
-    },
-  };
+    };
+  }
   // Each probe runs at most once per render, whether started early or asked for.
   const started = new Map();
   const once = (name) => {

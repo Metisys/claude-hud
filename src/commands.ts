@@ -302,7 +302,7 @@ async function usage(input: Input, ask: Sources["ask"]): Promise<Output> {
   if (!Number.isInteger(days) || days < 1) return fail(["--days takes a whole number of days, 1 or more"]);
   const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
   const since = localDay(input.now - (days - 1) * 24 * 60 * 60 * 1000);
-  const ledger = readLedger(input.paths.costs);
+  const ledger = input.paths.costs ? readLedger(input.paths.costs) : null;
   const codex = (await ask(["codex.tokens"]))["codex.tokens"];
   const notes = [
     ...(ledger === null ? [`No Claude rows: ${input.paths.costs} is missing or too large.`] : []),

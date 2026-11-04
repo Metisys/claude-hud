@@ -81,3 +81,26 @@ test('refreshCodexUsage writes the output, and keeps the old cache when the comm
   assert.equal(await refreshCodexUsage(cache, [process.execPath, ['-e', 'process.exit(255)']], () => 99), false);
   assert.deepEqual(JSON.parse(fs.readFileSync(cache, 'utf8')), { at: 42, text: '{"account":"a"}\n' }, 'minipc did not answer: the old values stay');
 }));
+
+test('a refresh marker older than the refresh limit is taken as dead', () => withCache(async (cache) => {
+  const started = [];
+  fs.writeFileSync(`${cache}.refresh`, '1');
+  const old = new Date(Date.now() - 60_000);
+  fs.utimesSync(`${cache}.refresh`, old, old);
+  codexUsage(cache, { now: Date.now(), refresh: (file) => started.push(file) });
+  assert.equal(started.length, 1);
+}));
+
+test('only `hud usage` gets the codex.tokens probe and the cost ledger', async () => {
+  const { createProbes, logicPaths, claudePaths, probesToStart } = await import('../collector.mjs');
+  const render = createProbes({ cwd: null, argv: [], env: {} });
+  assert.deepEqual(await render(['codex.tokens']), {}, 'a render cannot start ssh for the token table');
+  const usage = createProbes({ cwd: null, argv: [], env: {}, codexTokens: true });
+  assert.ok('codex.tokens' in await usage(['codex.tokens']), '`hud usage` has it');
+  const paths = claudePaths({}, '/home/u');
+  assert.equal(logicPaths(paths, null).costs, null);
+  assert.equal(logicPaths(paths, null, { costs: true }).costs, '/home/u/.claude/metrics/costs.jsonl');
+  const setting = (section, key) => ({ 'display.showAccountUsage': true })[`${section}.${key}`];
+  assert.ok(probesToStart(setting).includes('relay.state'), 'the relay request starts with the cage');
+  assert.ok(!probesToStart(() => undefined).includes('relay.state'));
+});
