@@ -4,6 +4,11 @@ All notable changes to Claude HUD will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.3] - 2026-11-04 (Metisys fork)
+
+### Fixed (Metisys fork, fdectl#124)
+- On a host other than minipc, the Codex bars and the Codex rows of `hud usage` were empty. The ssh command did not find `codex-usage`, because a command that ssh runs does not read `~/.profile` and thus has no `~/.local/bin` on PATH. The collector now runs `.local/bin/codex-usage` through ssh. On minipc, it runs `codex-usage` as before.
+
 ## [0.15.2] - 2026-11-04 (Metisys fork)
 
 ### Added (Metisys fork, fdectl#124)

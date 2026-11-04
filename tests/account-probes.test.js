@@ -44,7 +44,9 @@ test('relayPrefer reads x-relay-prefer from ANTHROPIC_CUSTOM_HEADERS', () => {
 
 test('codexCommand runs codex-usage locally on minipc and through ssh elsewhere', () => {
   assert.deepEqual(codexCommand(['--tokens'], 'minipc'), ['codex-usage', ['--tokens']]);
-  assert.deepEqual(codexCommand([], 'macbook.local'), ['ssh', ['-o', 'RemoteCommand=none', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', 'minipc', 'codex-usage']]);
+  // The ssh command names the program by its path: a command run through ssh on minipc has no ~/.local/bin on PATH.
+  assert.deepEqual(codexCommand([], 'macbook.local'), ['ssh', ['-o', 'RemoteCommand=none', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', 'minipc', '.local/bin/codex-usage']]);
+  assert.deepEqual(codexCommand(['--tokens'], 'macbook.local')[1].slice(-2), ['.local/bin/codex-usage', '--tokens']);
 });
 
 async function withCache(fn) {

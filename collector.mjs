@@ -606,10 +606,14 @@ export const CODEX_CACHE_MS = 60_000;
 const CODEX_REFRESH_MS = 30_000;
 const CODEX_RUN_MS = 20_000;
 
+// A command that ssh runs does not read ~/.profile on minipc, so ~/.local/bin is not on PATH there.
+// ssh starts the command in the home folder, so this path relative to it finds the program.
+export const CODEX_REMOTE_PROGRAM = '.local/bin/codex-usage';
+
 /** The program and arguments that run codex-usage with `args`: local on minipc, else through ssh. */
 export function codexCommand(args = [], hostname = os.hostname()) {
   if (hostname.split('.')[0] === CODEX_HOST) return ['codex-usage', args];
-  return ['ssh', ['-o', 'RemoteCommand=none', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', CODEX_HOST, 'codex-usage', ...args]];
+  return ['ssh', ['-o', 'RemoteCommand=none', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', CODEX_HOST, CODEX_REMOTE_PROGRAM, ...args]];
 }
 
 /**
