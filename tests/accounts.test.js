@@ -44,6 +44,31 @@ test('parseRelayAccounts reads the unified values of each token', () => {
   assert.equal(gao2.served, false);
 });
 
+test('parseRelayAccounts: the data time is unified_at_epoch, else unified_at', () => {
+  const unified = { '5h-utilization': '0.5', '5h-reset': String(at('2026-11-04T15:00:00Z')) };
+  // unified_at has no zone. Its day differs from the epoch's day, so the result differs in every zone.
+  const [both, onlyLocal, badEpoch] = parseRelayAccounts(relay([
+    { var: 'A', unified, unified_at: '2026-11-02T08:00:00', unified_at_epoch: at('2026-11-04T11:59:00Z') },
+    { var: 'B', unified, unified_at: '2026-11-04T11:58:00' },
+    { var: 'C', unified, unified_at: '2026-11-04T11:57:00', unified_at_epoch: null },
+  ]), null, NOW);
+  const [text, zero, garbage, future, none] = parseRelayAccounts(relay([
+    { var: 'D', unified, unified_at: '2026-11-02T08:00:00', unified_at_epoch: String(at('2026-11-04T11:56:00Z')) },
+    { var: 'E', unified, unified_at: '2026-11-04T11:55:00', unified_at_epoch: 0 },
+    { var: 'F', unified, unified_at: '2026-11-04T11:54:00', unified_at_epoch: 'x' },
+    { var: 'G', unified, unified_at: '2026-11-04T11:53:00', unified_at_epoch: Date.parse('2026-11-04T11:59:00Z') },
+    { var: 'H', unified, unified_at_epoch: 'x' },
+  ]), null, NOW);
+  assert.equal(text.at, Date.parse('2026-11-04T11:56:00Z'), 'an epoch as text');
+  assert.equal(zero.at, Date.parse('2026-11-04T11:55:00'), 'epoch 0: unified_at');
+  assert.equal(garbage.at, Date.parse('2026-11-04T11:54:00'), 'an epoch that is not a number: unified_at');
+  assert.equal(future.at, Date.parse('2026-11-04T11:53:00'), 'an epoch after now (ms, not s): unified_at');
+  assert.equal(none.at, null, 'no usable time');
+  assert.equal(both.at, Date.parse('2026-11-04T11:59:00Z'), 'the epoch wins over unified_at');
+  assert.equal(onlyLocal.at, Date.parse('2026-11-04T11:58:00'), 'an older relay: unified_at');
+  assert.equal(badEpoch.at, Date.parse('2026-11-04T11:57:00'), 'a null epoch: unified_at');
+});
+
 test('parseRelayAccounts: a window that reset after the record is at 0', () => {
   const [account] = parseRelayAccounts(relay([{ var: 'T', unified: { '5h-utilization': '0.5', '5h-reset': String(at('2026-11-04T11:00:00Z')) } }]), null, NOW);
   assert.equal(account.fiveHour.percent, 0);

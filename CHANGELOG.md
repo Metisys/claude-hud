@@ -4,10 +4,13 @@ All notable changes to Claude HUD will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-11-04 (Metisys fork)
+
 ### Added (Metisys fork, fdectl#124)
 - `display.showAccountUsage`: one 5h and 7d bar per Claude account from the token relay (`/_relay/state`). `▶` marks the account that serves the session. `full in` shows when a window reaches 100 % before it resets. When the relay does not answer, the stdin limits show as before.
 - `display.showCodexUsage`: one 5h and 7d bar per Codex account from `codex-usage` on minipc, refreshed in the background every 60 s.
-- `hud usage` (`/hud usage`): cost and tokens per repository or worktree, and per day, for Claude and Codex.
+- `hud usage` (`/hud usage`): cost and tokens per repository or worktree, and per day, for Claude and Codex. The Codex rows come from `codex-usage --tokens` (fdectl 2026-11-04 or later). When two Codex accounts worked in the same folder on the same day, the row adds their tokens.
+- The `full in` forecast takes the data time of each relay token from `unified_at_epoch` (Unix seconds). A relay that sends only `unified_at` (local time, no zone) still works.
 
 ## [0.15.1] - 2026-11-03
 
