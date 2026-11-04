@@ -12,6 +12,7 @@ import { getMemoryUsage, readMemory, type MemoryFacts } from "./memory.ts";
 import { readAuthInfo } from "./auth.ts";
 import { getCostTotals } from "./daily-cost.ts";
 import { getOutputSpeed } from "./speed.ts";
+import { resolveAccounts } from "./forecast.ts";
 import { externalUsageSnapshot, resolveUsage, type UsageTarget } from "./external-usage.ts";
 import { getTerminalWidth } from "./utils/terminal.ts";
 import { truncateToWidth, visibleWidth } from "./render/ansi.ts";
@@ -72,6 +73,8 @@ export async function renderStdin(stdin: StdinData, config: HudConfig, { ask, fi
   if (display.showMemoryUsage && config.lineLayout === "expanded") facts.push("memory");
   if (display.showUsage && display.externalUsagePath) facts.push("usage.read");
   if (display.externalUsageWritePath && stdinUsage) facts.push("usage.target");
+  if (display.showAccountUsage) facts.push("relay.state");
+  if (display.showCodexUsage) facts.push("codex.usage");
 
   const readTranscript = async (): Promise<TranscriptData> => {
     const data = await parseTranscript(paths.transcript ?? "", dataDir);
@@ -101,6 +104,12 @@ export async function renderStdin(stdin: StdinData, config: HudConfig, { ask, fi
     config,
     extraLabel: extraCmdLabel(answers.extra),
     authInfo: files && (display.showAuth || display.showAuthUser) ? readAuthInfo(paths.claudeJson) : null,
+    accounts: display.showAccountUsage || display.showCodexUsage
+      ? resolveAccounts({
+        ...(display.showAccountUsage ? { relay: answers["relay.state"] ?? null } : {}),
+        ...(display.showCodexUsage ? { codex: answers["codex.usage"] ?? null } : {}),
+      }, stdin.session_id ?? null, dataDir, now)
+      : null,
   }, columns, now);
   const snapshot = externalUsageSnapshot(answers["usage.target"] as UsageTarget, stdinUsage, now);
   return snapshot ? { lines, snapshot } : { lines };

@@ -56,6 +56,44 @@ Optional lines include tools, agents and todos, plus about a hundred other optio
 ▸ Fix authentication bug (2/5)                   ← todos
 ```
 
+## Metisys fork: usage per account
+
+This fork ([Metisys/claude-hud](https://github.com/Metisys/claude-hud)) adds usage per account ([fdectl#124](https://github.com/Metisys/fdectl/issues/124)). The added lines are off by default. To turn them on:
+
+```bash
+node hud.mjs set display.showAccountUsage=true display.showCodexUsage=true
+```
+
+```
+Context █████░░░░░ 45%
+Claude   GAO  5h ██░░░░░░░░ 17% (2h) │ 7d █░░░░░░░░░ 12% (3d 11h)
+Claude ▶ GAO2 5h ██████░░░░ 60% ▲ (3h 20m, full in 1h 10m) │ 7d ██████████ 98% (10h)
+Codex    gao@metisys.ai 5h ██░░░░░░░░ 20% (1h 40m) │ 7d █████████░ 92% (2d 2h)
+```
+
+- **Claude lines** (`display.showAccountUsage`). The collector sends `GET http://127.0.0.1:18100/_relay/state` to the token relay. The time limit is 300 ms. Each relay token gets one line with its 5h and 7d windows. When the relay does not answer, or has no window values, the usage line shows the stdin `rate_limits` as before. No error line shows.
+- **`▶`** marks the account that serves this session. The HUD calculates it as the relay does (`Pool.order` in `relay/anthropic-token-relay`). It is the token in `x-relay-prefer` (from `ANTHROPIC_CUSTOM_HEADERS`), else SHA-256 of the session id modulo the token count. A parked token is passed. The relay keeps no table of sessions, and the HUD reads none.
+- **`full in`** is the time until the window is at 100 % at the recent use rate. The window then shows in red with `▲`. Each render adds the current value of each window to `data/usage-rate.json`, with the time at which the source measured it. The rate is the change over the last 1 hour (5h window) or 24 hours (7d window). When the window resets before it is full, no time shows.
+- **Codex lines** (`display.showCodexUsage`). The collector runs `codex-usage` (fdectl) on minipc. On another host, it runs `ssh -o RemoteCommand=none -o BatchMode=yes minipc codex-usage`. The command runs in a separate process, and its output goes to `plugins/claude-hud/codex-usage.json`. When that file is 60 s old, the next render starts a new run and does not wait for it. When minipc does not answer, the last values show, with their age.
+- **`hud usage [--days n]`** prints the cost and tokens per repository or worktree, and per day. The Claude rows come from `~/.claude/metrics/costs.jsonl` (the ecc cost-tracker hook). The Codex rows come from `codex-usage --tokens` on minipc, and their cost is "subscription". Claude Code has its own `/usage`, and a plugin cannot replace it. Thus the table is `/hud usage`.
+
+### Install the fork in place of claude-hud@claude-hud
+
+The fork keeps the marketplace name `claude-hud`. Thus the plugin id stays `claude-hud@claude-hud`, and only the marketplace source changes:
+
+```bash
+claude plugin uninstall claude-hud@claude-hud
+claude plugin marketplace remove claude-hud
+claude plugin marketplace add Metisys/claude-hud
+claude plugin install claude-hud@claude-hud
+```
+
+The `statusLine` command must run the fork's build. `hud install` copies the launcher (`scripts/statusline.mjs`) to `~/.claude/plugins/claude-hud/statusline.mjs`, and sets `statusLine.command` in `~/.claude/settings.json` to run it with the absolute path of a Node 22.18 or later. The launcher runs the newest version under `~/.claude/plugins/cache/*/claude-hud/`. After the steps above, that is the fork's version.
+
+```bash
+node ~/.claude/plugins/cache/claude-hud/claude-hud/<version>/hud.mjs install --replace
+```
+
 ## Change It, Fix It, Report It
 
 Ask Claude, or type `/hud` and say what you want: "show tool activity", "use the compact layout", "the HUD is blank", "the context bar looks wrong". Claude looks up the options, shows you a preview, and saves the change once you approve it. `/hud` also undoes the last change, replays the last real render to explain what you see, and, for a real bug, writes a scrubbed report that you read in full before anything is filed.

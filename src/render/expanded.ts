@@ -1,6 +1,7 @@
 import type { HudElement } from '../config.ts';
 import { DEFAULT_ELEMENT_ORDER, DEFAULT_MERGE_GROUPS, DEFAULT_PROJECT_LINE_ORDER } from '../config.ts';
 import type { Frame } from './frame.ts';
+import { accountLines } from './accounts.ts';
 import { activityLine } from './activity.ts';
 import { separatorLine, visibleWidth } from './ansi.ts';
 import { contextLine } from './context.ts';
@@ -94,6 +95,11 @@ export function expandedLines(f: Frame): string[] {
 
   const rows: Row[] = [];
   const seen = new Set<HudElement>();
+  // The account lines follow the row that holds the usage element.
+  const accounts = accountLines(f).map((line) => ({ line, activity: false }));
+  const afterUsage = (members: HudElement[]): void => {
+    if (members.includes('usage')) rows.push(...accounts);
+  };
   for (let index = 0; index < order.length; index += 1) {
     const element = order[index];
     if (seen.has(element)) continue;
@@ -108,6 +114,7 @@ export function expandedLines(f: Frame): string[] {
       seen.add(element);
       const line = elementLine(f, element, separateAlign);
       if (line) rows.push({ line, activity: ACTIVITY.has(element) });
+      afterUsage([element]);
       continue;
     }
 
@@ -122,9 +129,13 @@ export function expandedLines(f: Frame): string[] {
     if (entries.length === 1) {
       const [{ element: only, line }] = entries;
       rows.push({ line: elementLine(f, only, separateAlign) ?? line, activity: ACTIVITY.has(only) });
+      afterUsage(sequence);
       continue;
     }
-    if (entries.length === 0) continue;
+    if (entries.length === 0) {
+      afterUsage(sequence);
+      continue;
+    }
 
     const combined = entries.map(({ line }) => line).join(' │ ');
     if (f.width === null || visibleWidth(combined) <= f.width) {
@@ -135,6 +146,7 @@ export function expandedLines(f: Frame): string[] {
         rows.push({ line: elementLine(f, member, stackedAlign) ?? line, activity: ACTIVITY.has(member) });
       }
     }
+    afterUsage(sequence);
   }
 
   const lines = rows.map(({ line }) => line);

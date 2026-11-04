@@ -72,6 +72,8 @@ export function usageParts(f: Frame, layout: Layout, align: LabelAlign = {}): st
   const display = f.config?.display;
   const usage = f.usageData;
   if (display?.showUsage === false || !usage) return null;
+  // The relay answered: the account lines (accounts.ts) replace the stdin windows.
+  if (f.accounts?.claude) return null;
 
   const colors = f.config?.colors;
   const compact = layout === 'compact';

@@ -170,6 +170,8 @@ export interface HudConfig {
     showMemoryUsage: boolean;
     showPromptCache: boolean;
     showCacheHitRate: boolean;
+    showAccountUsage: boolean;
+    showCodexUsage: boolean;
     showSessionTokens: boolean;
     showOutputStyle: boolean;
     showSessionStartDate: boolean;
@@ -270,6 +272,8 @@ export const DEFAULT_CONFIG: HudConfig = {
     showMemoryUsage: false,
     showPromptCache: false,
     showCacheHitRate: false,
+    showAccountUsage: false,
+    showCodexUsage: false,
     showSessionTokens: false,
     showOutputStyle: false,
     showSessionStartDate: false,

@@ -6,6 +6,7 @@ import { stripAnsi, textWidth } from "./render/ansi.ts";
 import { schemaLines } from "./schema.ts";
 import type { StdinData } from "./types.ts";
 import type { Sources } from "./main.ts";
+import { claudeRows, codexRows, localDay, readLedger, usageTables } from "./usage-report.ts";
 
 // The /hud skill's subcommands, run in the cage like a render. Each answers with lines for the
 // user's Claude to read; `set` also hands back the config for collector.mjs to write.
@@ -14,6 +15,7 @@ import type { Sources } from "./main.ts";
 //   preview [--set k=v]... [--state json] [--width n] [--last]
 //   set k=v...                  validated; `set --undo` is handled by hud.mjs
 //   report [--note text] [--expect word]...   a scrubbed case for an issue
+//   usage [--days n]            cost and tokens per repository or worktree and per day (usage-report.ts)
 
 type Render = (stdin: StdinData, config: HudConfig, sources: Sources) => Promise<Output>;
 type Raw = Record<string, unknown>;
@@ -292,6 +294,24 @@ async function report(input: Input, facts: Facts, loaded: LoadedConfig, render: 
   return { lines: json({ case: testCase, actual: actual.lines.map(stripAnsi) }) };
 }
 
+// ---- usage
+
+async function usage(input: Input, ask: Sources["ask"]): Promise<Output> {
+  const { flags } = parseArgs(input.command!.args);
+  const days = Number(flags.get("--days")?.at(-1) ?? 7);
+  if (!Number.isInteger(days) || days < 1) return fail(["--days takes a whole number of days, 1 or more"]);
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
+  const since = localDay(input.now - (days - 1) * 24 * 60 * 60 * 1000);
+  const ledger = readLedger(input.paths.costs);
+  const codex = (await ask(["codex.tokens"]))["codex.tokens"];
+  const notes = [
+    ...(ledger === null ? [`No Claude rows: ${input.paths.costs} is missing or too large.`] : []),
+    ...(typeof codex === "string" ? [] : ["No Codex rows: `codex-usage --tokens` on minipc did not answer."]),
+  ];
+  const rows = [...(ledger ? claudeRows(ledger, home) : []), ...(typeof codex === "string" ? codexRows(codex, home) : [])];
+  return { lines: [...usageTables(rows, since), ...(notes.length > 0 ? ["", ...notes] : [])] };
+}
+
 // ---- dispatch
 
 export async function runCommand(input: Input, loaded: LoadedConfig, render: Render, ask: Sources["ask"]): Promise<Output> {
@@ -302,6 +322,7 @@ export async function runCommand(input: Input, loaded: LoadedConfig, render: Ren
     case "preview": return preview(input, facts, loaded, render, ask);
     case "set": return set(input, loaded);
     case "report": return report(input, facts, loaded, render);
+    case "usage": return usage(input, ask);
     default: return fail([`Unknown command ${name}`]);
   }
 }
