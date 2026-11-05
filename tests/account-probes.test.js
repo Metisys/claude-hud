@@ -5,7 +5,8 @@ import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { CODEX_CACHE_MS, codexCommand, codexUsage, readRelayState, refreshCodexUsage, relayPrefer } from '../collector.mjs';
+import { CODEX_CACHE_MS, codexCommand, codexHomeState, codexHomeStates, codexServedHome, codexSessionHome, codexUsage, createProbes, readRelayState,
+  refreshCodexUsage, relayPrefer } from '../collector.mjs';
 
 async function serve(handler, fn) {
   const server = http.createServer(handler);
@@ -76,10 +77,10 @@ test('codexUsage returns the cache at once and starts one refresh when it is old
 test('refreshCodexUsage writes the output, and keeps the old cache when the command fails', () => withCache(async (cache) => {
   fs.writeFileSync(`${cache}.refresh`, '1');
   assert.equal(await refreshCodexUsage(cache, [process.execPath, ['-e', 'console.log(JSON.stringify({account:"a"}))']], () => 42), true);
-  assert.deepEqual(JSON.parse(fs.readFileSync(cache, 'utf8')), { at: 42, text: '{"account":"a"}\n' });
+  assert.deepEqual(JSON.parse(fs.readFileSync(cache, 'utf8')), { at: 42, text: '{"account":"a"}\n', homes: {} });
   assert.equal(fs.existsSync(`${cache}.refresh`), false, 'the marker is removed');
   assert.equal(await refreshCodexUsage(cache, [process.execPath, ['-e', 'process.exit(255)']], () => 99), false);
-  assert.deepEqual(JSON.parse(fs.readFileSync(cache, 'utf8')), { at: 42, text: '{"account":"a"}\n' }, 'minipc did not answer: the old values stay');
+  assert.deepEqual(JSON.parse(fs.readFileSync(cache, 'utf8')), { at: 42, text: '{"account":"a"}\n', homes: {} }, 'minipc did not answer: the old values stay');
 }));
 
 test('a refresh marker older than the refresh limit is taken as dead', () => withCache(async (cache) => {
@@ -104,3 +105,77 @@ test('only `hud usage` gets the codex.tokens probe and the cost ledger', async (
   assert.ok(probesToStart(setting).includes('relay.state'), 'the relay request starts with the cage');
   assert.ok(!probesToStart(() => undefined).includes('relay.state'));
 });
+
+// ---- Codex homes: the rollout lines as Codex 0.164 writes them on minipc (2026-11-04).
+const T = (iso) => Date.parse(iso);
+const meta = (account) => ({ timestamp: '2026-11-04T00:00:00Z', type: 'session_meta', payload: { id: 's', creator_account_id: account } });
+const turn = (iso, error = null) => ({ timestamp: iso, type: 'event_msg', payload: { type: 'task_complete', last_agent_message: error ? null : 'ok', error } });
+const NO_CREDITS = { message: 'Your workspace is out of credits. Ask your workspace owner to refill in order to continue.', codex_error_info: 'usage_limit_exceeded' };
+const NOT_SUPPORTED = { message: JSON.stringify({ type: 'error', status: 400, error: { type: 'invalid_request_error',
+  message: "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account.", code: 'model_not_found' } }), codex_error_info: 'other' };
+
+function rollout(home, name, lines) {
+  const dir = path.join(home, 'sessions', '2026', '11', name.slice(17, 19));
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `rollout-${name}.jsonl`);
+  fs.writeFileSync(file, `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`);
+  return file;
+}
+
+async function withHomes(fn) {
+  const dir = await mkdtemp(path.join(tmpdir(), 'hud-codex-homes-'));
+  try {
+    await fn(dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+test('codexHomeState: the newest unavailable error shows until a later turn succeeds', () => withHomes(async (dir) => {
+  const home = path.join(dir, 'a');
+  rollout(home, '2026-11-04T12-00-00-a', [meta('A'), turn('2026-11-04T04:00:00Z'), turn('2026-11-04T04:21:00Z', NO_CREDITS)]);
+  assert.deepEqual(codexHomeState(home), { account: 'A', unavailable: { reason: 'no credits', at: T('2026-11-04T04:21:00Z') } });
+  rollout(home, '2026-11-05T10-00-00-b', [meta('A'), turn('2026-11-05T02:00:00Z', NOT_SUPPORTED)]);
+  assert.deepEqual(codexHomeState(home).unavailable, { reason: 'model not supported', at: T('2026-11-05T02:00:00Z') });
+  rollout(home, '2026-11-05T11-00-00-c', [meta('A'), turn('2026-11-05T03:00:00Z')]);
+  assert.equal(codexHomeState(home).unavailable, null, 'a later successful turn clears it');
+  assert.equal(codexHomeState(path.join(dir, 'missing')), null);
+}));
+
+test('codexHomeState: other errors, and turns of another account in the home, change nothing', () => withHomes(async (dir) => {
+  const home = path.join(dir, 'b');
+  rollout(home, '2026-11-04T12-00-00-a', [meta('B'), turn('2026-11-04T04:00:00Z', NO_CREDITS), turn('2026-11-04T05:00:00Z', { message: 'stream disconnected' })]);
+  // Orca links the ~/.codex rollout files into each managed home: a linked file of account A is not B's.
+  const other = rollout(path.join(dir, 'codex'), '2026-11-05T12-00-00-x', [meta('A'), turn('2026-11-05T04:00:00Z')]);
+  const linked = path.join(home, 'sessions', '2026', '11', '05', path.basename(other));
+  fs.mkdirSync(path.dirname(linked), { recursive: true });
+  fs.linkSync(other, linked);
+  assert.deepEqual(codexHomeState(home), { account: 'B', unavailable: { reason: 'no credits', at: T('2026-11-04T04:00:00Z') } });
+  assert.deepEqual(codexHomeState(path.join(dir, 'codex')), { account: 'A', unavailable: null }, 'a home of linked files only is its own');
+}));
+
+test('codexHomeStates and codexServedHome: by CODEX_HOME, else ~/.codex, else the account of the session home', () => withHomes(async (dir) => {
+  const codex = path.join(dir, '.codex');
+  const managed = path.join(dir, 'managed', 'home');
+  rollout(codex, '2026-11-04T12-00-00-a', [meta('A'), turn('2026-11-04T04:00:00Z')]);
+  rollout(managed, '2026-11-04T12-00-00-b', [meta('B'), turn('2026-11-04T04:00:00Z', NOT_SUPPORTED)]);
+  const text = [codex, managed, '/not/on/this/host'].map((home, i) => JSON.stringify({ account: `${i}@x`, home })).join('\n');
+  const states = codexHomeStates(text);
+  assert.deepEqual(Object.keys(states), [codex, managed]);
+  assert.equal(codexServedHome(states, codexSessionHome({ HOME: dir })), codex);
+  assert.equal(codexServedHome(states, codexSessionHome({ HOME: dir, CODEX_HOME: '~/managed/home' })), managed);
+  const seat = path.join(dir, 'seat', 'codex-home');
+  rollout(seat, '2026-11-03T12-00-00-s', [meta('A'), turn('2026-11-03T04:00:00Z')]);
+  assert.equal(codexServedHome(states, codexSessionHome({ HOME: dir, CODEX_HOME: seat })), codex, 'a seat home with its own copy of login A');
+  assert.equal(codexServedHome(states, path.join(dir, 'empty')), null);
+}));
+
+test('the codex.usage probe sends the unavailable state and the served home, never the account ids', () => withHomes(async (dir) => {
+  const cache = path.join(dir, 'codex-usage.json');
+  const home = path.join(dir, '.codex');
+  fs.writeFileSync(cache, JSON.stringify({ at: Date.now(), text: '', homes: { [home]: { account: 'A', unavailable: { reason: 'no credits', at: 5 } } } }));
+  const ask = createProbes({ cwd: null, argv: [], env: { HOME: dir }, codexCache: cache });
+  const answer = (await ask(['codex.usage']))['codex.usage'];
+  assert.deepEqual(answer.homes, { [home]: { unavailable: { reason: 'no credits', at: 5 } } });
+  assert.equal(answer.served, home);
+}));

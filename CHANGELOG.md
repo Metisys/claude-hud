@@ -4,6 +4,12 @@ All notable changes to Claude HUD will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.4] - 2026-11-05 (Metisys fork)
+
+### Added
+- Codex account lines (`display.showCodexUsage`) mark the account of this session's Codex home (`CODEX_HOME`, else `~/.codex`) with `▶`.
+- A Codex account line shows `unavailable: no credits 3h ago` or `unavailable: model not supported 20m ago` when the newest finished turn of that account failed with that error and no later turn succeeded. The source is the rollout files of the account's Codex home on minipc. The HUD does not read `auth.json` and makes no request.
+
 ## [0.15.3] - 2026-11-05 (Metisys fork)
 
 ### Changed

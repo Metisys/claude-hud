@@ -68,7 +68,8 @@ node hud.mjs set display.showAccountUsage=true display.showCodexUsage=true
 Context █████░░░░░ 45%
 Claude   GAO  5h ██░░░░░░░░ 17% (2h) │ 7d █░░░░░░░░░ 12% (3d 11h, at Nov 7 23:20)
 Claude ▶ GAO2 5h ██████░░░░ 60% ▲ (3h 20m, full in 1h 10m) │ 7d ██████████ 98% (10h, at 22:00)
-Codex    gao@metisys.ai 5h ██░░░░░░░░ 20% (1h 40m) │ 7d █████████░ 92% (2d 2h, at Nov 6 14:00)
+Codex  ▶ gao@metisys.ai  5h ██░░░░░░░░ 20% (1h 40m) │ 7d █████████░ 92% (2d 2h, at Nov 6 14:00)
+Codex    gao2@metisys.ai 5h ░░░░░░░░░░ 0% (4h 10m) │ 7d ░░░░░░░░░░ 2% (6d 4h, at Nov 11 08:00) │ unavailable: model not supported 20m ago
 ```
 
 - **Claude lines** (`display.showAccountUsage`). The collector sends `GET http://127.0.0.1:18100/_relay/state` to the token relay. The time limit is 300 ms. Each relay token gets one line with its 5h and 7d windows. When the relay does not answer, or has no window values, the usage line shows the stdin `rate_limits` as before. No error line shows.
@@ -76,6 +77,8 @@ Codex    gao@metisys.ai 5h ██░░░░░░░░ 20% (1h 40m) │ 7d �
 - **7d reset**. The 7d window shows the countdown and the local wall-clock time of its reset (`3d 11h, at Nov 7 23:20`). The 5h window shows the countdown only.
 - **`full in`** is the time until the window is at 100 % at the recent use rate. The window then shows in red with `▲`. Each render adds the current value of each window to `data/usage-rate.json`, with the time at which the source measured it. The rate is the change over the last 1 hour (5h window) or 24 hours (7d window). When the window resets before it is full, or the account has no new value for the lookback time, no time shows.
 - **Codex lines** (`display.showCodexUsage`). The collector runs `codex-usage` (fdectl) on minipc. On another host, it runs `ssh -o RemoteCommand=none -o BatchMode=yes minipc codex-usage`. The command runs in a separate process, and its output goes to `plugins/claude-hud/codex-usage.json`. When that file is 60 s old, the next render starts a new run and does not wait for it. When minipc does not answer, the last values show, with their age.
+- **Codex `▶`** marks the account of this session's Codex home: `CODEX_HOME` when it is set, else `~/.codex`. Each `codex-usage` line names its home. When no line names the session home, the HUD compares accounts: the account of a home is `creator_account_id` in its newest rollout file (`<home>/sessions/…/rollout-*.jsonl`). A file with more than one link is used only when the home has no other file, because Orca links the `~/.codex` rollout files into each managed home.
+- **`unavailable: <reason> <age>`** shows when the newest finished turn of the home's account, in its 40 newest rollout files, failed with `out of credits` (`no credits`) or with `model_not_found` / `is not supported when using Codex with a ChatGPT account` (`model not supported`), and no later turn of that account succeeded. The background run of `codex-usage` also reads these files. The HUD does not read `auth.json` and does not send a request to Codex. The homes are on minipc, so on another host the Codex lines have no `▶` and no `unavailable`.
 - **`hud usage [--days n]`** prints the cost and tokens per repository or worktree, and per day. The Claude rows come from `~/.claude/metrics/costs.jsonl` (the ecc cost-tracker hook). The Codex rows come from `codex-usage --tokens` on minipc (fdectl 2026-11-04 or later), and their cost is "subscription". The Claude days use the local time zone, and the Codex days use the time zone of minipc. Claude Code has its own `/usage`, and a plugin cannot replace it. Thus the table is `/hud usage`.
 
 ### Install the fork in place of claude-hud@claude-hud
