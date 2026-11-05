@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import { renderLines } from '../src/render/index.ts';
 import { mergeConfig } from '../src/config.ts';
 
+// The 7d reset shows a local wall-clock time: fix the timezone so the expected text is stable.
+process.env.TZ = 'UTC';
 const NOW = new Date(2026, 10, 4, 12, 0).getTime();
 const MIN = 60 * 1000;
 const from = (ms) => new Date(NOW + ms);
@@ -31,8 +33,8 @@ test('the relay accounts replace the stdin usage, one line each, with the served
   assert.equal(out.length, 4);
   assert.match(out[1], /^Context .*45%$/, 'the usage part leaves the context line');
   assert.ok(!out.join('\n').includes('Usage'), 'no stdin usage');
-  assert.match(out[2], /^Claude   GAO  5h .* 17% \(2h\) │ 7d .* 12% \(3d 11h\)$/);
-  assert.match(out[3], /^Claude ▶ GAO2 5h .* 60% ▲ \(3h 20m, full in 1h 10m\) │ 7d .* 98% \(10h\)$/);
+  assert.match(out[2], /^Claude   GAO  5h .* 17% \(2h\) │ 7d .* 12% \(3d 11h, at [^)]+\)$/);
+  assert.match(out[3], /^Claude ▶ GAO2 5h .* 60% ▲ \(3h 20m, full in 1h 10m\) │ 7d .* 98% \(10h, at [^)]+\)$/);
 });
 
 test('without relay data the stdin usage shows as before, with no error line', () => {
@@ -64,4 +66,16 @@ test('the compact layout puts the account lines after its one line', () => {
   assert.equal(out.length, 3);
   assert.ok(!out[0].includes('Usage'));
   assert.match(out[2], /^Claude ▶ GAO2/);
+});
+
+test('the 7d window adds its reset as a local wall-clock time; the 5h window keeps the countdown only', () => {
+  const out = lines(ctx({ claude: [{ ...claude[0], sevenDay: win(46, 6600, 1800) }], codex: null }, { display: { showAccountUsage: true, hourCycle: 'h23' } }));
+  // NOW is 2026-11-04 12:00 UTC; 6600 min later is 2026-11-09 02:00 UTC.
+  const date = new Date(Date.UTC(2026, 10, 9)).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  assert.match(out[2], /5h .* 17% \(2h\) │/, 'the 5h window has no wall-clock time');
+  assert.match(out[2], new RegExp(`│ 7d .* 46% ▲ \\(4d 14h, at ${date} 02:00, full in 1d 6h\\)$`));
+  const codex = { fetchedAt: NOW, accounts: [{ name: 'a@x', at: NOW, fiveHour: win(20, 100), sevenDay: win(46, 6600), limitReached: null }] };
+  const parked = lines(ctx({ claude: [{ ...claude[0], blockedForS: 3600, sevenDay: win(46, 6600) }], codex }, { display: { showAccountUsage: true, showCodexUsage: true, hourCycle: 'h23' } }));
+  assert.match(parked[2], new RegExp(`7d .* 46% \\(4d 14h, at ${date} 02:00\\) │ parked 1h$`), 'a parked row shows it too');
+  assert.match(parked[3], new RegExp(`^Codex .* 7d .* 46% \\(4d 14h, at ${date} 02:00\\)$`), 'a Codex row shows it too');
 });

@@ -4,6 +4,11 @@ All notable changes to Claude HUD will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.3] - 2026-11-05 (Metisys fork)
+
+### Changed
+- The account lines (`display.showAccountUsage`, `display.showCodexUsage`) show the reset of each 7d window as a local wall-clock time after the countdown, for example `(4d 14h, at Nov 9 04:10)`. The format is the `both` format of `display.timeFormat`, and `display.hourCycle` applies. The 5h windows keep the countdown only.
+
 ## [0.15.2] - 2026-11-04 (Metisys fork)
 
 ### Added (Metisys fork, fdectl#124)
