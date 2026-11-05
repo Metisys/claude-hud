@@ -56,6 +56,17 @@ test('Codex accounts show their windows, a limit, and the age of old values', ()
   assert.ok(!fresh.join('\n').includes('ago'), 'fresh values show no age');
 });
 
+test('a Codex account shows the served marker and why it cannot serve models', () => {
+  const codex = { fetchedAt: NOW, accounts: [
+    { name: 'gao@x', at: NOW, served: true, fiveHour: win(0, 100), sevenDay: win(2, 3000), limitReached: null, unavailable: null },
+    { name: 'gao2@x', at: NOW, served: false, fiveHour: win(0, 100), sevenDay: win(2, 3000), limitReached: null,
+      unavailable: { reason: 'model not supported', at: NOW - 20 * MIN } },
+  ] };
+  const out = lines(ctx({ claude: null, codex }));
+  assert.match(out[2], /^Codex  ▶ gao@x  5h .* 0% .* │ 7d .* 2% \([^)]+\)$/);
+  assert.match(out[3], /^Codex    gao2@x 5h .* │ 7d .* 2% \([^)]+\) │ unavailable: model not supported 20m ago$/);
+});
+
 test('a parked token shows how long the relay keeps it parked', () => {
   const out = lines(ctx({ claude: [{ ...claude[0], blockedForS: 3600 }], codex: null }));
   assert.match(out[2], /│ parked 1h$/);

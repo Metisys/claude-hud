@@ -92,7 +92,7 @@ export const DESCRIPTIONS: Record<string, string> = {
   "display.showPromptCache": "Show when the main conversation's prompt cache expires",
   "display.showCacheHitRate": "Show the session's prompt-cache hit rate as `Cache hit X%`",
   "display.showAccountUsage": "Show one 5h and 7d bar per Claude account, from the token relay on 127.0.0.1:18100 (`/_relay/state`), with `▶` on the account that serves this session and the time each window is full at the recent rate. When the relay does not answer, the usage line shows the stdin limits as before",
-  "display.showCodexUsage": "Show one 5h and 7d bar per Codex account, from `codex-usage` on minipc (through ssh on another host, refreshed in the background every 60 s). When minipc does not answer, the last values show with their age",
+  "display.showCodexUsage": "Show one 5h and 7d bar per Codex account, from `codex-usage` on minipc (through ssh on another host, refreshed in the background every 60 s). When minipc does not answer, the last values show with their age. `▶` marks the account of CODEX_HOME (else ~/.codex). `unavailable: <reason>` shows when the newest turn of an account failed with no credits or an unsupported model, from its rollout files on minipc",
   "display.customLine": "Custom text shown on the first line (80 characters max)",
   "display.customLinePosition": "Put the custom text at the start or the end of the first line",
   "colors.context": "Base color for the context bar and context percentage",

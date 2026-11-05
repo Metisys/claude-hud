@@ -28,6 +28,8 @@ export interface AccountUsage {
   blockedForS?: number;
   /** Codex: the reason when the account has no windows, e.g. "workspace_member_credits_depleted". */
   limitReached?: string | null;
+  /** Codex: the newest model error of the account (e.g. "no credits") when no later turn succeeded. `at` is in ms. */
+  unavailable?: { reason: string; at: number } | null;
 }
 
 const TOKEN_PREFIX = 'CLAUDE_CODE_OAUTH_TOKEN_';
@@ -121,11 +123,24 @@ export interface CodexUsage {
   fetchedAt: number;
 }
 
-/** The Codex accounts from the codex.usage answer ({ at, text }: one JSON line per account), or null. */
+function unavailableOf(state: unknown): AccountUsage['unavailable'] {
+  if (!isObject(state) || !isObject(state.unavailable)) return null;
+  const reason = typeof state.unavailable.reason === 'string' ? displayLabel(state.unavailable.reason, 40) : '';
+  const at = finite(state.unavailable.at);
+  return reason && at !== null ? { reason, at } : null;
+}
+
+/**
+ * The Codex accounts from the codex.usage answer, or null. The answer is { at, text, homes, served }:
+ * `text` has one JSON line per account with its Codex home, `homes` the unavailable state of each home
+ * on this host, and `served` the home that this session uses.
+ */
 export function parseCodexUsage(answer: unknown, now: number): CodexUsage | null {
   if (!isObject(answer) || typeof answer.text !== 'string') return null;
   const fetchedAt = finite(answer.at);
   if (fetchedAt === null) return null;
+  const homes = isObject(answer.homes) ? answer.homes : {};
+  const served = typeof answer.served === 'string' ? answer.served : null;
   const accounts: AccountUsage[] = [];
   for (const line of answer.text.split('\n')) {
     let record: unknown;
@@ -139,12 +154,15 @@ export function parseCodexUsage(answer: unknown, now: number): CodexUsage | null
       ? windowOf(percentOf(finite(value.used_percent)), dateOf(finite(value.resets_at)), now)
       : { percent: null, resetAt: null });
     const name = displayLabel(typeof record.account === 'string' ? record.account : 'unknown', NAME_MAX);
+    const home = typeof record.home === 'string' ? record.home : null;
     accounts.push({
       name,
       at: timeOf(record.recorded_at),
       fiveHour: window(record.primary),
       sevenDay: window(record.secondary),
       limitReached: typeof record.limit_reached === 'string' ? displayLabel(record.limit_reached, 60) || null : null,
+      served: home !== null && home === served,
+      unavailable: home !== null && Object.hasOwn(homes, home) ? unavailableOf(homes[home]) : null,
     });
   }
   return { accounts, fetchedAt };

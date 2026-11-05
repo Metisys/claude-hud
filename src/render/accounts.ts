@@ -4,7 +4,8 @@ import { critical, dim, formatQuotaPercent, label, quotaBar } from './colors.ts'
 import { formatAgo, formatResetTime, wallClock } from './time.ts';
 
 // One line per account (fdectl#124): `Claude ▶ GAO  5h ███░░ 30% (2h 10m, full in 1h 5m) │ 7d … (4d 14h, at Nov 9 04:10)`.
-// `▶` marks the account that serves this session. A window that is on track to reach 100 % before
+// `▶` marks the account that serves this session: for Codex, the account of CODEX_HOME (else ~/.codex).
+// A Codex account whose newest model error has no later successful turn shows `unavailable: <reason> <age>`. A window that is on track to reach 100 % before
 // it resets shows `full in` and takes the red pace colour.
 
 // Codex values older than this show their age: minipc did not answer the last refreshes.
@@ -34,6 +35,9 @@ function accountLine(f: Frame, source: string, account: AccountUsage, nameWidth:
     parts.push(account.limitReached ? critical(`limit: ${account.limitReached}`, colors) : label('no window data', colors));
   } else {
     parts.push(windowText(f, '5h', account.fiveHour, 'relative'), windowText(f, '7d', account.sevenDay, 'both'));
+  }
+  if (account.unavailable) {
+    parts.push(critical(`unavailable: ${account.unavailable.reason} ${formatAgo(f.now - account.unavailable.at)}`, colors));
   }
   if (account.blockedForS && account.blockedForS > 0) {
     parts.push(critical(`parked ${formatResetTime(new Date(f.now + account.blockedForS * 1000), 'relative', wallClock(f.config?.display), f.now)}`, colors));

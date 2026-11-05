@@ -99,3 +99,14 @@ test('parseCodexUsage reads one account per line', () => {
   assert.equal(usage.accounts[0].at, Date.parse('2026-11-04T11:00:00Z'));
   assert.equal(parseCodexUsage(null, NOW), null);
 });
+
+test('parseCodexUsage marks the served home and the unavailable state of each home', () => {
+  const text = [JSON.stringify({ account: 'a@x', home: '/h/a' }), JSON.stringify({ account: 'b@x', home: '/h/b' }), JSON.stringify({ account: 'c@x' })].join('\n');
+  const usage = parseCodexUsage({ at: NOW, text, served: '/h/b', homes: { '/h/b': { unavailable: { reason: 'no credits', at: NOW - 1000 } },
+    '/h/a': { unavailable: { reason: '', at: 1 } } } }, NOW);
+  assert.deepEqual(usage.accounts.map((a) => [a.name, a.served, a.unavailable]), [
+    ['a@x', false, null],
+    ['b@x', true, { reason: 'no credits', at: NOW - 1000 }],
+    ['c@x', false, null],
+  ]);
+});

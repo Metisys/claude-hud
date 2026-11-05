@@ -619,7 +619,9 @@ export function codexCommand(args = [], hostname = os.hostname()) {
  */
 export function codexUsage(cachePath, { now = Date.now(), refresh = startCodexRefresh } = {}) {
   const cached = readJsonObject(cachePath, 512 * 1024);
-  const valid = cached && Number.isFinite(cached.at) && typeof cached.text === 'string' ? { at: cached.at, text: cached.text } : null;
+  const valid = cached && Number.isFinite(cached.at) && typeof cached.text === 'string'
+    ? { at: cached.at, text: cached.text, ...(cached.homes && typeof cached.homes === 'object' ? { homes: cached.homes } : {}) }
+    : null;
   if (!valid || now - valid.at >= CODEX_CACHE_MS) {
     const marker = `${cachePath}.refresh`;
     try {
@@ -640,14 +642,179 @@ function startCodexRefresh(cachePath) {
   spawn(process.execPath, [SELF, '--codex-refresh', cachePath], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
 }
 
-/** Runs codex-usage once and writes { at, text } to the cache. Keeps the old cache when the run fails. */
+// ---- Codex homes on this host: which account a home runs, and whether it can serve models.
+// The source is the rollout files that Codex writes (<home>/sessions/YYYY/MM/DD/rollout-*.jsonl).
+// This code never reads auth.json and never uses the network.
+
+const ROLLOUT_FILES = 40;
+// The background refresh reads whole files up to this size. On minipc the largest is below 1 MB.
+const ROLLOUT_MAX_BYTES = 64 * 1024 * 1024;
+// session_meta is the first line of a rollout file. On minipc it is below 32 KB.
+const ROLLOUT_HEAD_BYTES = 256 * 1024;
+
+/** The model errors that make an account unavailable, as Codex writes them in a task_complete error. */
+export const CODEX_UNAVAILABLE = [
+  ['no credits', /out of credits/i],
+  ['model not supported', /model_not_found|is not supported when using Codex with a ChatGPT account/],
+];
+
+/** The default Codex home of this session: CODEX_HOME when it is set, else ~/.codex. */
+export function codexSessionHome(env = process.env, home = homeOf(env)) {
+  const custom = env.CODEX_HOME?.trim();
+  return custom ? path.resolve(expandHome(custom, home)) : path.join(home, '.codex');
+}
+
+/** The newest `limit` rollout files of a Codex home, newest first. The file name starts with the session start time. */
+function rolloutFiles(home, limit = ROLLOUT_FILES) {
+  const names = (dir) => {
+    try {
+      return fs.readdirSync(dir).sort().reverse();
+    } catch {
+      return [];
+    }
+  };
+  const files = [];
+  const root = path.join(home, 'sessions');
+  for (const year of names(root)) for (const month of names(path.join(root, year))) for (const day of names(path.join(root, year, month))) {
+    for (const name of names(path.join(root, year, month, day))) {
+      if (!/^rollout-.*\.jsonl$/.test(name)) continue;
+      files.push(path.join(root, year, month, day, name));
+      if (files.length >= limit) return files;
+    }
+  }
+  return files;
+}
+
+/**
+ * The account and the finished turns of one rollout file. `shared` is true when the file has more
+ * than one link: Orca links the ~/.codex rollout files into each managed home, so such a file can
+ * come from another account.
+ */
+function readRollout(file) {
+  try {
+    const stat = fs.statSync(file);
+    if (!stat.isFile() || stat.size > ROLLOUT_MAX_BYTES) return null;
+    let account = null;
+    const turns = [];
+    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+      if (!line.includes('"session_meta"') && !line.includes('"task_complete"')) continue;
+      let entry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const payload = entry?.payload;
+      if (!payload || typeof payload !== 'object') continue;
+      if (entry.type === 'session_meta' && typeof payload.creator_account_id === 'string') account ??= payload.creator_account_id;
+      if (entry.type === 'event_msg' && payload.type === 'task_complete') {
+        const at = Date.parse(entry.timestamp);
+        if (Number.isFinite(at)) turns.push({ at, error: payload.error ? JSON.stringify(payload.error) : null });
+      }
+    }
+    return { account, shared: stat.nlink > 1, turns };
+  } catch {
+    return null;
+  }
+}
+
+/** The account id that a home runs: the creator of its newest own rollout file, else of its newest one. */
+function homeAccount(rollouts) {
+  return (rollouts.find((r) => r.account && !r.shared) ?? rollouts.find((r) => r.account))?.account ?? null;
+}
+
+/** The account and the link state of a rollout file from its first line only (session_meta), for the render path. */
+function readRolloutHead(file) {
+  try {
+    const fd = fs.openSync(file, fs.constants.O_RDONLY);
+    try {
+      const stat = fs.fstatSync(fd);
+      const buffer = Buffer.alloc(Math.min(stat.size, ROLLOUT_HEAD_BYTES));
+      const text = buffer.subarray(0, fs.readSync(fd, buffer, 0, buffer.length, 0)).toString('utf8');
+      const entry = JSON.parse(text.slice(0, text.indexOf('\n') >= 0 ? text.indexOf('\n') : undefined));
+      const account = entry?.type === 'session_meta' && typeof entry.payload?.creator_account_id === 'string' ? entry.payload.creator_account_id : null;
+      return { account, shared: stat.nlink > 1, turns: [] };
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The state of one Codex home: { account, unavailable }. `unavailable` is { reason, at } for the newest
+ * turn of the home's account that failed with a CODEX_UNAVAILABLE error, when no later turn of that
+ * account succeeded. Null when the home has no rollout file with an account.
+ */
+export function codexHomeState(home) {
+  const rollouts = rolloutFiles(home).map(readRollout).filter(Boolean);
+  const account = homeAccount(rollouts);
+  if (!account) return null;
+  let succeeded = 0;
+  let unavailable = null;
+  for (const turn of rollouts.filter((r) => r.account === account).flatMap((r) => r.turns)) {
+    if (!turn.error) {
+      succeeded = Math.max(succeeded, turn.at);
+      continue;
+    }
+    const reason = CODEX_UNAVAILABLE.find(([, pattern]) => pattern.test(turn.error))?.[0];
+    if (reason && (!unavailable || turn.at > unavailable.at)) unavailable = { reason, at: turn.at };
+  }
+  return { account, unavailable: unavailable && unavailable.at > succeeded ? unavailable : null };
+}
+
+/** The state of each home that a codex-usage line names, by home. A home that is not on this host has no entry. */
+export function codexHomeStates(text) {
+  const states = {};
+  for (const line of String(text).split('\n')) {
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const home = record?.home;
+    if (typeof home !== 'string' || !path.isAbsolute(home) || Object.hasOwn(states, home)) continue;
+    const state = codexHomeState(home);
+    if (state) states[home] = state;
+  }
+  return states;
+}
+
+/**
+ * The home in `states` that this session uses: the one that is the session home, else the one whose
+ * account is the account of the session home (an Orca seat can have its own copy of a login). Null
+ * when none matches.
+ */
+export function codexServedHome(states, sessionHome) {
+  const homes = Object.keys(states);
+  if (homes.length === 0) return null;
+  const same = homes.find((home) => samePath(home, sessionHome));
+  if (same) return same;
+  // Every render runs this: read the first line of at most 5 files, not the files.
+  const account = homeAccount(rolloutFiles(sessionHome, 5).map(readRolloutHead).filter(Boolean));
+  return account ? homes.find((home) => states[home].account === account) ?? null : null;
+}
+
+/** The codex.usage answer: the cache, the unavailable state of each home, and the home this session uses. */
+function codexAnswer(cached, sessionHome) {
+  if (!cached) return null;
+  const states = cached.homes && typeof cached.homes === 'object' ? cached.homes : {};
+  const homes = Object.fromEntries(Object.entries(states).map(([home, state]) => [home, { unavailable: state?.unavailable ?? null }]));
+  return { at: cached.at, text: cached.text, homes, served: codexServedHome(states, sessionHome) };
+}
+
+/** Runs codex-usage once and writes { at, text, homes } to the cache. Keeps the old cache when the run fails. */
 export async function refreshCodexUsage(cachePath, command = codexCommand(), now = () => Date.now()) {
   const [file, args] = command;
   const text = await run(file, args, { timeout: CODEX_RUN_MS, maxBuffer: 256 * 1024 });
   try {
     if (text !== null) {
       const tmp = `${cachePath}.${process.pid}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify({ at: now(), text }), { mode: 0o600 });
+      // The homes are paths on minipc. Through ssh, a local path with the same name is another home.
+      const homes = file === 'ssh' ? {} : codexHomeStates(text);
+      fs.writeFileSync(tmp, JSON.stringify({ at: now(), text, homes }), { mode: 0o600 });
       fs.renameSync(tmp, cachePath);
     }
   } finally {
@@ -704,7 +871,7 @@ export function createProbes({ cwd, argv = process.argv, env = process.env, usag
       return readText(usage.write) ?? { text: null, mtimeMs: null };
     },
     'relay.state': async () => ({ state: await readRelayState(relayUrl), prefer: relayPrefer(env) }),
-    'codex.usage': () => (codexCache ? codexUsage(codexCache) : null),
+    'codex.usage': () => (codexCache ? codexAnswer(codexUsage(codexCache), codexSessionHome(env)) : null),
   };
   // For `hud usage` only, which Claude Code asks about first. It may wait, since it is not the status line.
   if (codexTokens) {
