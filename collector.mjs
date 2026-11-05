@@ -647,7 +647,10 @@ function startCodexRefresh(cachePath) {
 // This code never reads auth.json and never uses the network.
 
 const ROLLOUT_FILES = 40;
-const ROLLOUT_MAX_BYTES = 8 * 1024 * 1024;
+// The background refresh reads whole files up to this size. On minipc the largest is below 1 MB.
+const ROLLOUT_MAX_BYTES = 64 * 1024 * 1024;
+// session_meta is the first line of a rollout file. On minipc it is below 32 KB.
+const ROLLOUT_HEAD_BYTES = 256 * 1024;
 
 /** The model errors that make an account unavailable, as Codex writes them in a task_complete error. */
 export const CODEX_UNAVAILABLE = [
@@ -720,6 +723,25 @@ function homeAccount(rollouts) {
   return (rollouts.find((r) => r.account && !r.shared) ?? rollouts.find((r) => r.account))?.account ?? null;
 }
 
+/** The account and the link state of a rollout file from its first line only (session_meta), for the render path. */
+function readRolloutHead(file) {
+  try {
+    const fd = fs.openSync(file, fs.constants.O_RDONLY);
+    try {
+      const stat = fs.fstatSync(fd);
+      const buffer = Buffer.alloc(Math.min(stat.size, ROLLOUT_HEAD_BYTES));
+      const text = buffer.subarray(0, fs.readSync(fd, buffer, 0, buffer.length, 0)).toString('utf8');
+      const entry = JSON.parse(text.slice(0, text.indexOf('\n') >= 0 ? text.indexOf('\n') : undefined));
+      const account = entry?.type === 'session_meta' && typeof entry.payload?.creator_account_id === 'string' ? entry.payload.creator_account_id : null;
+      return { account, shared: stat.nlink > 1, turns: [] };
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The state of one Codex home: { account, unavailable }. `unavailable` is { reason, at } for the newest
  * turn of the home's account that failed with a CODEX_UNAVAILABLE error, when no later turn of that
@@ -767,9 +789,11 @@ export function codexHomeStates(text) {
  */
 export function codexServedHome(states, sessionHome) {
   const homes = Object.keys(states);
+  if (homes.length === 0) return null;
   const same = homes.find((home) => samePath(home, sessionHome));
   if (same) return same;
-  const account = homeAccount(rolloutFiles(sessionHome, 5).map(readRollout).filter(Boolean));
+  // Every render runs this: read the first line of at most 5 files, not the files.
+  const account = homeAccount(rolloutFiles(sessionHome, 5).map(readRolloutHead).filter(Boolean));
   return account ? homes.find((home) => states[home].account === account) ?? null : null;
 }
 
@@ -788,7 +812,9 @@ export async function refreshCodexUsage(cachePath, command = codexCommand(), now
   try {
     if (text !== null) {
       const tmp = `${cachePath}.${process.pid}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify({ at: now(), text, homes: codexHomeStates(text) }), { mode: 0o600 });
+      // The homes are paths on minipc. Through ssh, a local path with the same name is another home.
+      const homes = file === 'ssh' ? {} : codexHomeStates(text);
+      fs.writeFileSync(tmp, JSON.stringify({ at: now(), text, homes }), { mode: 0o600 });
       fs.renameSync(tmp, cachePath);
     }
   } finally {

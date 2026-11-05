@@ -179,3 +179,25 @@ test('the codex.usage probe sends the unavailable state and the served home, nev
   assert.deepEqual(answer.homes, { [home]: { unavailable: { reason: 'no credits', at: 5 } } });
   assert.equal(answer.served, home);
 }));
+
+test('a refresh through ssh scans no local home: the homes in its lines are paths on minipc', () => withHomes(async (dir) => {
+  const home = path.join(dir, '.codex');
+  rollout(home, '2026-11-04T12-00-00-a', [meta('A'), turn('2026-11-04T04:00:00Z', NO_CREDITS)]);
+  const cache = path.join(dir, 'codex-usage.json');
+  const line = JSON.stringify({ account: 'a@x', home });
+  const print = ['-e', `console.log(${JSON.stringify(line)})`];
+  await refreshCodexUsage(cache, [process.execPath, print], () => 1);
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(cache, 'utf8')).homes), [home], 'local codex-usage: the home is scanned');
+  // A fake ssh: a script named ssh that prints the same line.
+  const ssh = path.join(dir, 'bin', 'ssh');
+  fs.mkdirSync(path.dirname(ssh));
+  fs.writeFileSync(ssh, `#!/bin/sh\necho '${line}'\n`, { mode: 0o755 });
+  const PATH = process.env.PATH;
+  process.env.PATH = `${path.dirname(ssh)}${path.delimiter}${PATH}`;
+  try {
+    assert.equal(await refreshCodexUsage(cache, ['ssh', []], () => 2), true);
+  } finally {
+    process.env.PATH = PATH;
+  }
+  assert.deepEqual(JSON.parse(fs.readFileSync(cache, 'utf8')).homes, {});
+}));
