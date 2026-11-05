@@ -3,20 +3,22 @@ import type { Frame } from './frame.ts';
 import { critical, dim, formatQuotaPercent, label, quotaBar } from './colors.ts';
 import { formatAgo, formatResetTime, wallClock } from './time.ts';
 
-// One line per account (fdectl#124): `Claude ▶ GAO  5h ███░░ 30% (2h 10m, full in 1h 5m) │ 7d …`.
+// One line per account (fdectl#124): `Claude ▶ GAO  5h ███░░ 30% (2h 10m, full in 1h 5m) │ 7d … (4d 14h, at Nov 9 04:10)`.
 // `▶` marks the account that serves this session. A window that is on track to reach 100 % before
 // it resets shows `full in` and takes the red pace colour.
 
 // Codex values older than this show their age: minipc did not answer the last refreshes.
 const CODEX_STALE_MS = 2 * 60 * 1000;
 
-function windowText(f: Frame, name: string, w: AccountWindow): string {
+// The 7d window also shows its reset as a local wall-clock time (`4d 14h, at Nov 9 04:10`), so the
+// user can plan the week. The 5h window keeps the countdown only.
+function windowText(f: Frame, name: string, w: AccountWindow, reset: 'relative' | 'both'): string {
   const colors = f.config?.colors;
   const display = f.config?.display;
   const pace = w.fullAt ? 'critical' : null;
   const percent = formatQuotaPercent(w.percent, colors, display?.usageValue ?? 'percent', pace);
   const notes = [
-    formatResetTime(w.resetAt, 'relative', wallClock(display), f.now),
+    formatResetTime(w.resetAt, reset, wallClock(display), f.now),
     w.fullAt ? critical(`full in ${formatResetTime(w.fullAt, 'relative', wallClock(display), f.now) || '0m'}`, colors) : '',
   ].filter(Boolean);
   const bar = display?.usageBarEnabled ?? true ? `${quotaBar(w.percent ?? 0, f.barWidth, colors, pace)} ` : '';
@@ -31,7 +33,7 @@ function accountLine(f: Frame, source: string, account: AccountUsage, nameWidth:
   if (account.fiveHour.percent === null && account.sevenDay.percent === null) {
     parts.push(account.limitReached ? critical(`limit: ${account.limitReached}`, colors) : label('no window data', colors));
   } else {
-    parts.push(windowText(f, '5h', account.fiveHour), windowText(f, '7d', account.sevenDay));
+    parts.push(windowText(f, '5h', account.fiveHour, 'relative'), windowText(f, '7d', account.sevenDay, 'both'));
   }
   if (account.blockedForS && account.blockedForS > 0) {
     parts.push(critical(`parked ${formatResetTime(new Date(f.now + account.blockedForS * 1000), 'relative', wallClock(f.config?.display), f.now)}`, colors));
