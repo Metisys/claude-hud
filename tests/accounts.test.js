@@ -44,6 +44,28 @@ test('parseRelayAccounts reads the unified values of each token', () => {
   assert.equal(gao2.served, false);
 });
 
+const overrideTokens = (usableGao = true) => ['GAO', 'GAO2', 'GAO3'].map((name, index) =>
+  ({ var: `CLAUDE_CODE_OAUTH_TOKEN_${name}`, usable: index > 0 || usableGao, unified: { '5h-utilization': '0.1' } }));
+const overrideOf = (fields = {}) =>
+  ({ path: '/home/u/.config/orca/relay-prefer', value: 'GAO', token: 'CLAUDE_CODE_OAUTH_TOKEN_GAO', active: true, ...fields });
+const servedWith = (state, prefer) => parseRelayAccounts({ state, prefer: `CLAUDE_CODE_OAUTH_TOKEN_${prefer}` }, 'session-1', NOW)
+  .filter((a) => a.served).map((a) => a.name);
+
+test('parseRelayAccounts: an active relay override replaces x-relay-prefer', () => {
+  assert.deepEqual(servedWith({ tokens: overrideTokens(), override: overrideOf() }, 'GAO2'), ['GAO']);
+});
+
+test('parseRelayAccounts: a missing, inactive or unloaded override keeps x-relay-prefer', () => {
+  assert.deepEqual(servedWith({ tokens: overrideTokens() }, 'GAO2'), ['GAO2'], 'no override object');
+  assert.deepEqual(servedWith({ tokens: overrideTokens(), override: overrideOf({ active: false, token: null }) }, 'GAO2'), ['GAO2'], 'inactive');
+  assert.deepEqual(servedWith({ tokens: overrideTokens(), override: overrideOf({ active: false }) }, 'GAO2'), ['GAO2'], 'active is false, token set');
+  assert.deepEqual(servedWith({ tokens: overrideTokens(), override: overrideOf({ token: 'CLAUDE_CODE_OAUTH_TOKEN_OTHER' }) }, 'GAO2'), ['GAO2'], 'token not loaded');
+});
+
+test('parseRelayAccounts: a parked override token passes to the next usable token in the ring', () => {
+  assert.deepEqual(servedWith({ tokens: overrideTokens(false), override: overrideOf() }, 'GAO3'), ['GAO2']);
+});
+
 test('parseRelayAccounts: the data time is unified_at_epoch, else unified_at', () => {
   const unified = { '5h-utilization': '0.5', '5h-reset': String(at('2026-11-04T15:00:00Z')) };
   // unified_at has no zone. Its day differs from the epoch's day, so the result differs in every zone.
