@@ -4,6 +4,11 @@ All notable changes to Claude HUD will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.5] - 2026-11-16 (Metisys fork)
+
+### Fixed
+- The account lines (`display.showAccountUsage`) put `▶` on the token that the relay's host-wide override (`~/.config/orca/relay-prefer`, fdectl#244) names while `/_relay/state` shows `override.active`. Before, `▶` followed the session's `x-relay-prefer` header, which the relay ignores while the override is active. When the override token is parked, `▶` moves to the next usable token, as in the relay.
+
 ## [0.15.4] - 2026-11-05 (Metisys fork)
 
 ### Added

@@ -70,7 +70,7 @@ function relayTimeOf(token: Record<string, unknown>, now: number): number | null
 
 /**
  * The index of the token that the relay tries first for this session, as the relay's Pool.order does:
- * the `x-relay-prefer` token when it names a loaded token, else SHA-256 of the session id (the first 8
+ * the `prefer` token when it names a loaded token, else SHA-256 of the session id (the first 8
  * bytes, big-endian) modulo the token count. In that ring, the first usable token comes first.
  */
 export function servedIndex(names: string[], usable: boolean[], sessionId: string | null, prefer: string | null): number | null {
@@ -87,6 +87,16 @@ export function servedIndex(names: string[], usable: boolean[], sessionId: strin
 }
 
 /**
+ * The token that the relay tries first for every request on the host: `state.override.token` while
+ * `state.override.active` is true (the relay-prefer file names a loaded token). It replaces the
+ * session's `x-relay-prefer` and the session pin. Null when the relay has no override or it is inactive.
+ */
+function overrideToken(state: Record<string, unknown>): string | null {
+  const override = state.override;
+  return isObject(override) && override.active === true && typeof override.token === 'string' ? override.token : null;
+}
+
+/**
  * The Claude accounts from the relay.state answer, or null when the relay did not answer or no token
  * has window values yet. Then the HUD shows the stdin rate_limits as before.
  */
@@ -94,7 +104,8 @@ export function parseRelayAccounts(answer: unknown, sessionId: string | null, no
   if (!isObject(answer) || !isObject(answer.state) || !Array.isArray(answer.state.tokens)) return null;
   const tokens = answer.state.tokens.filter(isObject);
   const names = tokens.map((token) => (typeof token.var === 'string' ? token.var : ''));
-  const prefer = typeof answer.prefer === 'string' ? answer.prefer : null;
+  const forced = overrideToken(answer.state);
+  const prefer = forced && names.includes(forced) ? forced : typeof answer.prefer === 'string' ? answer.prefer : null;
   const served = servedIndex(names, tokens.map((token) => token.usable !== false), sessionId?.trim() || null, prefer);
   const accounts = tokens.map((token, index): AccountUsage | null => {
     const unified = isObject(token.unified) ? token.unified : {};
