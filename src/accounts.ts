@@ -88,12 +88,15 @@ export function servedIndex(names: string[], usable: boolean[], sessionId: strin
 
 /**
  * The token that the relay tries first for every request on the host: `state.override.token` while
- * `state.override.active` is true (the relay-prefer file names a loaded token). It replaces the
- * session's `x-relay-prefer` and the session pin. Null when the relay has no override or it is inactive.
+ * `state.override.active` is true (the relay-prefer file names a loaded token), else `state.auto.token`
+ * while `state.auto.decided` is true (fdectl 2026-11-18: the token whose 7-day window resets first).
+ * Both replace the session's `x-relay-prefer` and the session pin. Null when neither applies.
  */
-function overrideToken(state: Record<string, unknown>): string | null {
+function hostToken(state: Record<string, unknown>): string | null {
   const override = state.override;
-  return isObject(override) && override.active === true && typeof override.token === 'string' ? override.token : null;
+  if (isObject(override) && override.active === true && typeof override.token === 'string') return override.token;
+  const auto = state.auto;
+  return isObject(auto) && auto.decided === true && typeof auto.token === 'string' ? auto.token : null;
 }
 
 /**
@@ -104,7 +107,7 @@ export function parseRelayAccounts(answer: unknown, sessionId: string | null, no
   if (!isObject(answer) || !isObject(answer.state) || !Array.isArray(answer.state.tokens)) return null;
   const tokens = answer.state.tokens.filter(isObject);
   const names = tokens.map((token) => (typeof token.var === 'string' ? token.var : ''));
-  const forced = overrideToken(answer.state);
+  const forced = hostToken(answer.state);
   const prefer = forced && names.includes(forced) ? forced : typeof answer.prefer === 'string' ? answer.prefer : null;
   const served = servedIndex(names, tokens.map((token) => token.usable !== false), sessionId?.trim() || null, prefer);
   const accounts = tokens.map((token, index): AccountUsage | null => {
