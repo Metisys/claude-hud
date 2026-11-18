@@ -66,6 +66,24 @@ test('parseRelayAccounts: a parked override token passes to the next usable toke
   assert.deepEqual(servedWith({ tokens: overrideTokens(false), override: overrideOf() }, 'GAO3'), ['GAO2']);
 });
 
+const autoOf = (fields = {}) =>
+  ({ token: 'CLAUDE_CODE_OAUTH_TOKEN_GAO3', decided: true, decided_requests: 1, resets: {}, ...fields });
+
+test('parseRelayAccounts: a decided relay auto rule replaces x-relay-prefer', () => {
+  assert.deepEqual(servedWith({ tokens: overrideTokens(), auto: autoOf() }, 'GAO2'), ['GAO3']);
+});
+
+test('parseRelayAccounts: an active override wins over the auto rule', () => {
+  assert.deepEqual(servedWith({ tokens: overrideTokens(), override: overrideOf(), auto: autoOf() }, 'GAO2'), ['GAO']);
+  assert.deepEqual(servedWith({ tokens: overrideTokens(), override: overrideOf({ active: false, token: null }), auto: autoOf() }, 'GAO2'), ['GAO3'], 'inactive override');
+});
+
+test('parseRelayAccounts: an undecided or unloaded auto rule keeps x-relay-prefer', () => {
+  assert.deepEqual(servedWith({ tokens: overrideTokens(), auto: autoOf({ decided: false, token: null }) }, 'GAO2'), ['GAO2'], 'undecided');
+  assert.deepEqual(servedWith({ tokens: overrideTokens(), auto: autoOf({ decided: false }) }, 'GAO2'), ['GAO2'], 'decided is false, token set');
+  assert.deepEqual(servedWith({ tokens: overrideTokens(), auto: autoOf({ token: 'CLAUDE_CODE_OAUTH_TOKEN_OTHER' }) }, 'GAO2'), ['GAO2'], 'token not loaded');
+});
+
 test('parseRelayAccounts: the data time is unified_at_epoch, else unified_at', () => {
   const unified = { '5h-utilization': '0.5', '5h-reset': String(at('2026-11-04T15:00:00Z')) };
   // unified_at has no zone. Its day differs from the epoch's day, so the result differs in every zone.

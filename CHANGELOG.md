@@ -4,6 +4,11 @@ All notable changes to Claude HUD will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.6] - 2026-11-18 (Metisys fork)
+
+### Fixed
+- The account lines (`display.showAccountUsage`) put `▶` on the token that the relay's auto rule (fdectl 2026-11-18: the token whose 7-day window resets first) chose while `/_relay/state` shows `auto.decided`. Before, `▶` followed the session's `x-relay-prefer` header, which the relay ignores while the auto rule decides. An active `override` still wins over `auto`.
+
 ## [0.15.5] - 2026-11-16 (Metisys fork)
 
 ### Fixed
